@@ -67,13 +67,39 @@
   .scopes { font-size:.72rem; color:var(--muted); }
   .empty { padding:3rem; text-align:center; color:var(--muted); }
   code { background:var(--card); padding:.1rem .3rem; border-radius:4px; font-size:.85em; }
+
+  #login { max-width: 22rem; margin: 4rem auto; }
+  #login form { display:flex; gap:.5rem; margin-top:1rem; }
+  #login input {
+    flex:1; padding:.55rem .7rem; font-size:1rem; border-radius:6px;
+    border:1px solid var(--line); background:var(--card); color:var(--fg);
+  }
+  #login button {
+    padding:.55rem 1rem; font-size:.95rem; font-weight:600; cursor:pointer;
+    border:none; border-radius:6px; background:var(--fg); color:var(--bg);
+  }
+  #login #loginError { color: var(--crit); }
+  #signout { text-decoration:none; }
+  #signout:hover { text-decoration:underline; }
 </style>
 </head>
 <body>
 
+<div id="login" hidden>
+  <h1>Participant Data Status</h1>
+  <p class="meta">This dashboard shows study participant data. Enter the access password.</p>
+  <form id="loginForm">
+    <input type="password" id="pw" placeholder="Password" autocomplete="current-password" required>
+    <button type="submit">Unlock</button>
+  </form>
+  <p class="meta" id="loginError" hidden>Incorrect password.</p>
+</div>
+
+<div id="app" hidden>
 <header>
   <h1>Participant Data Status</h1>
   <span class="meta" id="meta">loading…</span>
+  <a href="#" id="signout" class="meta" style="margin-left:auto">sign out</a>
 </header>
 
 <div class="legend">
@@ -85,6 +111,7 @@
 
 <div class="alerts" id="alerts"></div>
 <div class="scroll"><table id="table"></table></div>
+</div><!-- /#app -->
 
 <script>
 const STREAMS = [
@@ -208,18 +235,63 @@ function render(data) {
   document.getElementById("table").innerHTML = head + `<tbody>${rows}</tbody>`;
 }
 
+// --- access -----------------------------------------------------------------
+// The password only unlocks /api/status; index.html itself holds no data, so a
+// visitor without it sees an empty shell.
+const KEY = "nsf_sch_dashboard_pw";
+const loginEl = document.getElementById("login");
+const appEl = document.getElementById("app");
+
+function showLogin(wasWrong) {
+  loginEl.hidden = false;
+  appEl.hidden = true;
+  document.getElementById("loginError").hidden = !wasWrong;
+  const pw = document.getElementById("pw");
+  pw.value = "";        // clear it, or the next attempt appends to the old value
+  pw.focus();
+}
+
+document.getElementById("loginForm").addEventListener("submit", e => {
+  e.preventDefault();
+  localStorage.setItem(KEY, document.getElementById("pw").value);
+  load();
+});
+
+document.getElementById("signout").addEventListener("click", e => {
+  e.preventDefault();
+  localStorage.removeItem(KEY);
+  showLogin(false);
+});
+
 async function load() {
+  const pw = localStorage.getItem(KEY);
+  if (!pw) return showLogin(false);
+
+  let r;
   try {
-    const r = await fetch("/api/status", { cache: "no-store" });
-    if (!r.ok) {
-      const err = await r.json().catch(() => ({}));
-      document.getElementById("meta").textContent = err.hint || `error ${r.status}`;
-      return;
-    }
-    render(await r.json());
+    r = await fetch("/api/status", {
+      cache: "no-store",
+      headers: { Authorization: `Bearer ${pw}` },
+    });
   } catch (e) {
     document.getElementById("meta").textContent = "failed to load: " + e.message;
+    return;
   }
+
+  if (r.status === 401) {
+    localStorage.removeItem(KEY);
+    return showLogin(true);
+  }
+
+  loginEl.hidden = true;
+  appEl.hidden = false;
+
+  if (!r.ok) {
+    const err = await r.json().catch(() => ({}));
+    document.getElementById("meta").textContent = err.hint || `error ${r.status}`;
+    return;
+  }
+  render(await r.json());
 }
 
 load();
