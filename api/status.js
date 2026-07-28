@@ -9,17 +9,16 @@
 // team-scoped automation bypass token.
 //
 // Required env var on Vercel:  DASHBOARD_PASSWORD
+//
+// NOTE ON THE SIGNATURE: exported as `GET`, not as a bare default export. On
+// Vercel a bare default export is treated as the Node.js (req, res) handler, so
+// `request.headers.get()` would not exist and the function crashes with
+// FUNCTION_INVOCATION_FAILED. Named method exports get Web-standard
+// Request/Response.
 
 import { get } from '@vercel/blob';
 
 const STATUS_PATH = 'status.json';
-
-function safeEqual(a, b) {
-  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
-  let diff = 0;
-  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
-  return diff === 0;
-}
 
 function json(body, status) {
   return new Response(JSON.stringify(body), {
@@ -28,7 +27,14 @@ function json(body, status) {
   });
 }
 
-export default async function handler(request) {
+function safeEqual(a, b) {
+  if (typeof a !== 'string' || typeof b !== 'string' || a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+export async function GET(request) {
   const password = process.env.DASHBOARD_PASSWORD;
   if (!password) {
     // Fail CLOSED. With no password configured there is nothing to verify
@@ -40,6 +46,7 @@ export default async function handler(request) {
       hint: 'DASHBOARD_PASSWORD is not set on this deployment. Add it in Vercel → Settings → Environment Variables, then redeploy.',
     }, 503);
   }
+
   if (!safeEqual(request.headers.get('authorization') || '', `Bearer ${password}`)) {
     return json({ error: 'unauthorized' }, 401);
   }
@@ -50,10 +57,7 @@ export default async function handler(request) {
     // cache can otherwise serve a stale copy for up to 60 seconds.
     result = await get(STATUS_PATH, { access: 'private', useCache: false });
   } catch (err) {
-    return new Response(JSON.stringify({ error: 'blob_read_failed', detail: String(err) }), {
-      status: 500,
-      headers: { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' },
-    });
+    return json({ error: 'blob_read_failed', detail: String(err) }, 500);
   }
 
   if (!result || result.statusCode !== 200) {
