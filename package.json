@@ -1,0 +1,10 @@
+{
+  "name": "nsf-sch-status-dashboard",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Live participant data-sharing status for the NSF SCH study",
+  "dependencies": {
+    "@vercel/blob": "^2.3.0"
+  }
+}

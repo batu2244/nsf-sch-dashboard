@@ -1,0 +1,229 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NSF SCH — Participant Data Status</title>
+<style>
+  :root {
+    --bg: #ffffff; --fg: #1a1a1a; --muted: #6b7280; --line: #e5e7eb;
+    --card: #f9fafb;
+    --ok: #16a34a; --ok-bg: #dcfce7;
+    --warn: #d97706; --warn-bg: #fef3c7;
+    --crit: #dc2626; --crit-bg: #fee2e2;
+    --none: #9ca3af; --none-bg: #f3f4f6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0d1117; --fg: #e6edf3; --muted: #8b949e; --line: #30363d;
+      --card: #161b22;
+      --ok: #3fb950; --ok-bg: #12261a;
+      --warn: #d29922; --warn-bg: #2b2411;
+      --crit: #f85149; --crit-bg: #2d1213;
+      --none: #6e7681; --none-bg: #1c2128;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 1.5rem;
+    font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: var(--bg); color: var(--fg);
+  }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; gap: .75rem; margin-bottom: 1rem; }
+  h1 { font-size: 1.35rem; margin: 0; }
+  .meta { color: var(--muted); font-size: .85rem; }
+  .dot { display:inline-block; width:.5rem; height:.5rem; border-radius:50%; margin-right:.35rem; }
+  .legend { display:flex; gap:1rem; flex-wrap:wrap; font-size:.8rem; color:var(--muted); margin-bottom:1rem; }
+
+  .alerts { margin-bottom: 1.25rem; }
+  .alert {
+    display:flex; gap:.6rem; align-items:baseline;
+    padding:.5rem .75rem; border-radius:6px; margin-bottom:.35rem; font-size:.88rem;
+    border-left:3px solid var(--warn); background:var(--warn-bg);
+  }
+  .alert.critical { border-left-color: var(--crit); background: var(--crit-bg); }
+  .alert b { font-variant-numeric: tabular-nums; }
+  details summary {
+    cursor: pointer; font-size: .82rem; color: var(--muted);
+    padding: .35rem 0; user-select: none;
+  }
+  details summary:hover { color: var(--fg); }
+
+  .scroll { overflow-x: auto; border:1px solid var(--line); border-radius:8px; }
+  table { border-collapse: collapse; width:100%; min-width: 900px; font-size:.85rem; }
+  th, td { padding:.5rem .6rem; text-align:left; border-bottom:1px solid var(--line); white-space:nowrap; }
+  thead th { background: var(--card); font-weight:600; font-size:.78rem; color:var(--muted); text-transform:uppercase; letter-spacing:.03em; }
+  tbody tr:last-child td { border-bottom:none; }
+  td.pid { font-weight:600; font-variant-numeric: tabular-nums; }
+
+  .pill { display:inline-block; padding:.15rem .5rem; border-radius:999px; font-size:.75rem; font-weight:600; }
+  .pill.ok   { color:var(--ok);   background:var(--ok-bg); }
+  .pill.warn { color:var(--warn); background:var(--warn-bg); }
+  .pill.crit { color:var(--crit); background:var(--crit-bg); }
+  .pill.none { color:var(--none); background:var(--none-bg); }
+
+  .cell { display:flex; flex-direction:column; gap:.1rem; }
+  .cell .age { font-size:.72rem; color:var(--muted); font-variant-numeric: tabular-nums; }
+  .scopes { font-size:.72rem; color:var(--muted); }
+  .empty { padding:3rem; text-align:center; color:var(--muted); }
+  code { background:var(--card); padding:.1rem .3rem; border-radius:4px; font-size:.85em; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Participant Data Status</h1>
+  <span class="meta" id="meta">loading…</span>
+</header>
+
+<div class="legend">
+  <span><span class="dot" style="background:var(--ok)"></span>sharing &amp; fresh</span>
+  <span><span class="dot" style="background:var(--warn)"></span>stale</span>
+  <span><span class="dot" style="background:var(--crit)"></span>consent expired / no data</span>
+  <span><span class="dot" style="background:var(--none)"></span>not configured</span>
+</div>
+
+<div class="alerts" id="alerts"></div>
+<div class="scroll"><table id="table"></table></div>
+
+<script>
+const STREAMS = [
+  ["heart_rate", "Heart rate"],
+  ["steps", "Steps"],
+  ["sleep", "Sleep"],
+  ["hrv", "HRV"],
+  ["spo2", "SpO₂"],
+  ["sleep_temperature", "Skin temp"],
+];
+
+const SCOPE_LABEL = {
+  activity_fitness: "activity",
+  health_metrics: "metrics",
+  sleep: "sleep",
+};
+
+function ago(hours) {
+  if (hours == null) return "—";
+  if (hours < 1) return Math.round(hours * 60) + "m ago";
+  if (hours < 48) return hours.toFixed(1).replace(/\.0$/, "") + "h ago";
+  return Math.round(hours / 24) + "d ago";
+}
+
+function stateClass(state) {
+  return { ok: "ok", stale: "warn", no_data: "crit", not_configured: "none" }[state] || "none";
+}
+
+function streamCell(s) {
+  if (!s) return '<span class="pill none">—</span>';
+  const cls = stateClass(s.state);
+  const label = { ok: "live", stale: "stale", no_data: "none" }[s.state] || s.state;
+  return `<div class="cell">
+    <span class="pill ${cls}">${label}</span>
+    <span class="age">${ago(s.hours_stale)}</span>
+  </div>`;
+}
+
+function consentCell(fb) {
+  const map = {
+    ok: ["ok", "granted"],
+    expired: ["crit", "expired"],
+    error: ["crit", "error"],
+    no_credentials: ["none", "no creds"],
+    unknown: ["none", "unknown"],
+  };
+  const [cls, label] = map[fb.consent] || ["none", fb.consent];
+  const scopes = (fb.scopes || []).map(s => SCOPE_LABEL[s] || s).join(", ");
+  return `<div class="cell">
+    <span class="pill ${cls}">${label}</span>
+    <span class="scopes">${scopes || "&nbsp;"}</span>
+  </div>`;
+}
+
+function tokenCell(fb) {
+  const d = fb.token_expires_in_days;
+  if (d == null) return '<span class="pill none">unknown</span>';
+  const cls = d <= 0 ? "crit" : d <= 2 ? "warn" : "ok";
+  const label = d <= 0 ? "expired" : d + "d left";
+  const exact = fb.token_date_is_exact ? "" : '<span class="age">approx date</span>';
+  return `<div class="cell"><span class="pill ${cls}">${label}</span>${exact}</div>`;
+}
+
+function awairCell(devices, label) {
+  const d = (devices || []).find(x => x.label === label);
+  if (!d) return '<span class="pill none">—</span>';
+  if (d.state === "not_configured") return '<span class="pill none">n/a</span>';
+  const cls = stateClass(d.state);
+  const mins = d.minutes_stale;
+  const age = mins == null ? "—" : mins < 90 ? mins + "m ago" : ago(mins / 60);
+  return `<div class="cell">
+    <span class="pill ${cls}">${d.state === "ok" ? "live" : d.state === "stale" ? "stale" : "none"}</span>
+    <span class="age">${age}</span>
+  </div>`;
+}
+
+function render(data) {
+  const gen = new Date(data.generated_at);
+  const ageMin = Math.round((Date.now() - gen) / 60000);
+  document.getElementById("meta").textContent =
+    `${data.participants.length} participants · updated ${ageMin}m ago (${gen.toLocaleString()}) · polls every ${data.poll_interval_minutes}m`;
+
+  const alertsEl = document.getElementById("alerts");
+  const list = data.alerts || [];
+  const row = a => `<div class="alert ${a.severity === "critical" ? "critical" : ""}">
+      <b>${a.participant}</b><span>${a.message}</span></div>`;
+
+  if (!list.length) {
+    alertsEl.innerHTML = `<div class="alert" style="border-left-color:var(--ok);background:var(--ok-bg)">
+      <span>No alerts — everything is reporting.</span></div>`;
+  } else {
+    // Show criticals up front; tuck the rest behind a disclosure so a bad day
+    // doesn't push the table off the screen.
+    const crit = list.filter(a => a.severity === "critical");
+    const warn = list.filter(a => a.severity !== "critical");
+    const shown = crit.length ? crit : warn.slice(0, 5);
+    const hidden = crit.length ? warn : warn.slice(5);
+    alertsEl.innerHTML =
+      shown.map(row).join("") +
+      (hidden.length
+        ? `<details><summary>${hidden.length} more warning${hidden.length > 1 ? "s" : ""}</summary>
+             ${hidden.map(row).join("")}</details>`
+        : "");
+  }
+
+  const head = `<thead><tr>
+    <th>Participant</th><th>Consent &amp; scopes</th><th>Token</th>
+    ${STREAMS.map(([, l]) => `<th>${l}</th>`).join("")}
+    <th>Awair home</th><th>Awair work</th>
+  </tr></thead>`;
+
+  const rows = data.participants.map(p => `<tr>
+    <td class="pid">${p.id}</td>
+    <td>${consentCell(p.fitbit || {})}</td>
+    <td>${tokenCell(p.fitbit || {})}</td>
+    ${STREAMS.map(([k]) => `<td>${streamCell((p.fitbit?.streams || {})[k])}</td>`).join("")}
+    <td>${awairCell(p.awair?.devices, "home")}</td>
+    <td>${awairCell(p.awair?.devices, "work")}</td>
+  </tr>`).join("");
+
+  document.getElementById("table").innerHTML = head + `<tbody>${rows}</tbody>`;
+}
+
+async function load() {
+  try {
+    const r = await fetch("/api/status", { cache: "no-store" });
+    if (!r.ok) {
+      const err = await r.json().catch(() => ({}));
+      document.getElementById("meta").textContent = err.hint || `error ${r.status}`;
+      return;
+    }
+    render(await r.json());
+  } catch (e) {
+    document.getElementById("meta").textContent = "failed to load: " + e.message;
+  }
+}
+
+load();
+setInterval(load, 60000);   // page refreshes every minute; data changes every 30
+</script>
+</body>
+</html>
