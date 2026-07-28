@@ -242,10 +242,12 @@ const KEY = "nsf_sch_dashboard_pw";
 const loginEl = document.getElementById("login");
 const appEl = document.getElementById("app");
 
-function showLogin(wasWrong) {
+function showLogin(message) {
   loginEl.hidden = false;
   appEl.hidden = true;
-  document.getElementById("loginError").hidden = !wasWrong;
+  const err = document.getElementById("loginError");
+  err.hidden = !message;
+  if (message) err.textContent = message;
   const pw = document.getElementById("pw");
   pw.value = "";        // clear it, or the next attempt appends to the old value
   pw.focus();
@@ -260,12 +262,12 @@ document.getElementById("loginForm").addEventListener("submit", e => {
 document.getElementById("signout").addEventListener("click", e => {
   e.preventDefault();
   localStorage.removeItem(KEY);
-  showLogin(false);
+  showLogin(null);
 });
 
 async function load() {
   const pw = localStorage.getItem(KEY);
-  if (!pw) return showLogin(false);
+  if (!pw) return showLogin(null);
 
   let r;
   try {
@@ -274,24 +276,35 @@ async function load() {
       headers: { Authorization: `Bearer ${pw}` },
     });
   } catch (e) {
-    document.getElementById("meta").textContent = "failed to load: " + e.message;
-    return;
+    return showLogin("Could not reach the server: " + e.message);
   }
 
+  const body = await r.json().catch(() => ({}));
+
+  // Unlock ONLY on responses that prove the password was accepted:
+  //   200 -> data,  404 -> authenticated but the poller hasn't pushed yet.
+  // Everything else keeps the gate shut. Do not add a generic `else unlock`
+  // here — that is what made any password work.
   if (r.status === 401) {
     localStorage.removeItem(KEY);
-    return showLogin(true);
+    return showLogin("Incorrect password.");
+  }
+  if (!r.ok && r.status !== 404) {
+    localStorage.removeItem(KEY);
+    return showLogin(body.hint || `Server error (${r.status}).`);
   }
 
   loginEl.hidden = true;
   appEl.hidden = false;
+  document.getElementById("loginError").hidden = true;   // clear any stale message
 
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    document.getElementById("meta").textContent = err.hint || `error ${r.status}`;
+  if (r.status === 404) {
+    document.getElementById("meta").textContent = body.hint || "No data yet.";
+    document.getElementById("table").innerHTML = "";
+    document.getElementById("alerts").innerHTML = "";
     return;
   }
-  render(await r.json());
+  render(body);
 }
 
 load();

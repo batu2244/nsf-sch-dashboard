@@ -31,7 +31,14 @@ function json(body, status) {
 export default async function handler(request) {
   const password = process.env.DASHBOARD_PASSWORD;
   if (!password) {
-    return json({ error: 'server_misconfigured', hint: 'DASHBOARD_PASSWORD is not set.' }, 500);
+    // Fail CLOSED. With no password configured there is nothing to verify
+    // against, so deny everyone rather than letting everyone through. 503 is
+    // distinct from 401 so the page can say "not configured" instead of
+    // "wrong password" — but either way the gate stays shut.
+    return json({
+      error: 'not_configured',
+      hint: 'DASHBOARD_PASSWORD is not set on this deployment. Add it in Vercel → Settings → Environment Variables, then redeploy.',
+    }, 503);
   }
   if (!safeEqual(request.headers.get('authorization') || '', `Bearer ${password}`)) {
     return json({ error: 'unauthorized' }, 401);
